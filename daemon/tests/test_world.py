@@ -150,6 +150,32 @@ class TestMayorLifecycle(WorldTestCase):
         self.assertEqual(self.world.session(VILLAGE, SESSION).tokens_out, 0)
         self.assertEqual(self.mayor().say, before, "a banner must not become speech")
 
+    def test_old_records_do_not_look_live(self):
+        """A session that last wrote hours ago must not appear to be working.
+
+        last_seen starts as a placeholder of "now"; if the first real record is
+        max()'d against that placeholder the placeholder wins and a dead session
+        stays lit. One on this machine had been dead 3.3 hours, its process gone,
+        and Codeville still drew its mayor hammering away at a terminal.
+        """
+        self.feed(assistant(tool_use(description="a long-finished call"),
+                            timestamp="2020-01-01T00:00:00Z"))
+        session = self.world.session(VILLAGE, SESSION)
+        villager = session.villagers[session.main_id]
+        self.assertLess(villager.last_seen, now() - 3600,
+                        "the record's own timestamp must win over the placeholder")
+
+        events = self.world.sweep()
+        self.assertIn("agent.despawn", kinds(events))
+        self.assertNotIn(session.main_id, session.villagers)
+
+    def test_recent_quiet_agent_dozes_rather_than_leaving(self):
+        """Quiet for a minute is idle; quiet for hours is gone."""
+        self.feed(assistant({"type": "text", "text": "hi"}))
+        self.world.sweep(now() + IDLE_AFTER + 1)
+        session = self.world.session(VILLAGE, SESSION)
+        self.assertEqual(session.villagers[session.main_id].state, IDLE)
+
     def test_out_of_order_records_do_not_rewind_last_seen(self):
         """Lines are not sorted by timestamp; backward jumps of hours occur. A
         stale record must not make a live agent look quiet."""

@@ -87,6 +87,11 @@ class Villager:
     say: str = ""
     started_at: float = field(default_factory=now)
     last_seen: float = field(default_factory=now)
+    #: False until a record with a real timestamp has been applied. Until then
+    #: last_seen is only a placeholder and must be overwritten rather than
+    #: max()'d — otherwise a transcript whose records are hours old keeps the
+    #: creation time and a long-dead session shows as working forever.
+    seen_record: bool = False
     ended_at: Optional[float] = None
     ok: Optional[bool] = None
     tool_count: int = 0
@@ -267,6 +272,19 @@ class World:
         session.tokens_out += out
 
     @staticmethod
+    def _touch(villager: Villager, stamp: float) -> None:
+        """Advance a villager's clock.
+
+        The first real record wins outright; after that time only moves forward,
+        because transcript lines are not sorted and backward jumps of hours occur.
+        """
+        if not villager.seen_record:
+            villager.last_seen = stamp
+            villager.seen_record = True
+        else:
+            villager.last_seen = max(villager.last_seen, stamp)
+
+    @staticmethod
     def _set_state(villager: "Villager", state: str) -> List[dict]:
         """Change a villager's state, emitting an event only on a real transition.
 
@@ -318,7 +336,7 @@ class World:
                                         description="the mayor")
         if created:
             events.append({"t": "agent.spawn", "agent": mayor.to_dict()})
-        mayor.last_seen = max(mayor.last_seen, stamp)
+        self._touch(mayor, stamp)
 
         if kind == "assistant":
             if is_synthetic(record):
@@ -370,7 +388,7 @@ class World:
             villager.tool = described
             villager.tool_count += 1
             session.tool_count += 1
-            villager.last_seen = max(villager.last_seen, stamp)
+            self._touch(villager, stamp)
             events.append({"t": "agent.tool", "agent": villager.id,
                            "tool": described, "at": stamp})
             events += self._set_state(villager, WORKING)
@@ -431,9 +449,7 @@ class World:
             events.append({"t": "agent.spawn", "agent": villager.to_dict()})
 
         stamp = record_time(record) or now()
-        # Lines are not sorted by timestamp — backward jumps of seconds to hours
-        # occur — so never let a stale record make a live agent look quiet.
-        villager.last_seen = max(villager.last_seen, stamp)
+        self._touch(villager, stamp)
         session.last_activity = max(session.last_activity, stamp)
         self.village(village_slug).last_active = session.last_activity
 

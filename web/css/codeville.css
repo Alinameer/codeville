@@ -298,7 +298,7 @@ body {
 .cv-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 320 / 180;
+  aspect-ratio: 320 / 120;
   overflow: hidden;
   border-top: 1px solid color-mix(in srgb, var(--panel-edge) 60%, transparent);
 }
@@ -313,7 +313,7 @@ body {
   image-rendering: crisp-edges;
 }
 
-.cv-island--quiet .cv-stage { aspect-ratio: 320 / 96; }
+.cv-island--quiet .cv-stage { aspect-ratio: 320 / 72; }
 
 /* -------------------------------------------------------------- Village green */
 

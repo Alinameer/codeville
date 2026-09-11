@@ -20,10 +20,10 @@
  */
 
 export const LOGICAL_W = 320;
-export const LOGICAL_H = 180;
+export const LOGICAL_H = 120;
 
 /** Ground line the actors stand on. */
-const FLOOR_Y = 132;
+const FLOOR_Y = 92;
 
 /** Where each kind of work happens, in logical pixels. */
 export const STATIONS = {
@@ -49,7 +49,12 @@ const IDLE_SPOTS = [
 const WALK_SPEED = 38;       // logical px per second
 
 /** On-screen height of a villager, in logical pixels. */
-const ACTOR_SIZE = 30;
+const ACTOR_SIZE = 34;
+
+/** Ideal gap between two villagers standing at the same place. */
+const SLOT_SPACING = 17;
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const ARRIVE_EPSILON = 1.5;
 
 /* ----------------------------------------------------------- sprite bank */
@@ -113,21 +118,24 @@ export class Actor {
 
   /** Point the actor at the station for a tool category. */
   goToWork(category) {
-    const station = STATIONS[category] || STATIONS.other;
     this.station = category;
-    // Spread actors sharing a station so they don't stand inside each other.
-    this.targetX = station.x + (this.seed - 0.5) * 18;
     this.working = true;
     this.state = 'walking';
   }
 
   /** Send the actor back to loitering. */
   goIdle() {
-    const spot = IDLE_SPOTS[Math.floor(this.seed * IDLE_SPOTS.length)];
-    this.targetX = spot.x + (this.seed - 0.5) * 14;
-    this.working = false;
     this.station = null;
+    this.working = false;
     this.state = 'walking';
+  }
+
+  /** Where this actor should stand, given its slot among others like it. */
+  placeAt(baseX, slot, total) {
+    // Fan out around the anchor so a crowd at one station stays legible instead
+    // of collapsing into a single sprite.
+    const spread = Math.min(SLOT_SPACING, 70 / Math.max(1, total - 1));
+    this.targetX = clamp(baseX + (slot - (total - 1) / 2) * spread, 10, LOGICAL_W - 10);
   }
 
   finish(ok) {
@@ -283,6 +291,7 @@ export class Scene {
   syncAgents(agents) {
     const seen = new Set();
     const opening = !this.primed;
+    const freshActors = [];
     for (const agent of agents) {
       seen.add(agent.id);
       let actor = this.actors.get(agent.id);
@@ -305,11 +314,39 @@ export class Scene {
       // The villagers already living here are standing about when you arrive;
       // only agents that start *later* walk in through the gate. Otherwise the
       // village looks deserted for the first few seconds after every connect.
-      if (fresh && opening) actor.snapToTarget();
+      if (fresh && opening) freshActors.push(actor);
     }
-    this.primed = true;
     for (const [id, actor] of this.actors) {
       if (!seen.has(id) && !actor.leaving) actor.finish(true);
+    }
+
+    this.layoutStations();
+    // Place the opening cast only after their marks are known.
+    for (const actor of freshActors) actor.snapToTarget();
+    this.primed = true;
+  }
+
+  /**
+   * Give every actor a spot, fanning out anyone sharing a destination.
+   *
+   * Without this two agents running Bash at once stand in exactly the same
+   * place and read as one villager — which is how a village with "2 working"
+   * ended up showing a single character.
+   */
+  layoutStations() {
+    const groups = new Map();
+    for (const actor of this.actors.values()) {
+      if (actor.leaving) continue;
+      const key = actor.station || `idle:${Math.floor(actor.seed * IDLE_SPOTS.length)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(actor);
+    }
+    for (const [key, members] of groups) {
+      members.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable, not frame-dependent
+      const anchor = key.startsWith('idle:')
+        ? IDLE_SPOTS[Number(key.slice(5))] || IDLE_SPOTS[0]
+        : (STATIONS[key] || STATIONS.other);
+      members.forEach((actor, index) => actor.placeAt(anchor.x, index, members.length));
     }
   }
 
@@ -352,7 +389,7 @@ function drawFallbackGround(ctx, biome, time) {
   ctx.beginPath();
   ctx.moveTo(0, FLOOR_Y - 6);
   for (let x = 0; x <= LOGICAL_W; x += 8) {
-    ctx.lineTo(x, FLOOR_Y - 10 + Math.sin((x + time * 2) * 0.03) * 4);
+    ctx.lineTo(x, FLOOR_Y - 12 + Math.sin((x + time * 2) * 0.03) * 4);
   }
   ctx.lineTo(LOGICAL_W, LOGICAL_H); ctx.lineTo(0, LOGICAL_H); ctx.fill();
 
