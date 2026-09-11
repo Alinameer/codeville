@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Codeville
+GenericName=Claude Code activity monitor
+Comment=Watch Claude Code work, as a village
+Exec=codeville-tray
+Icon=codeville
+Terminal=false
+Categories=Development;Monitor;
+Keywords=claude;agent;monitor;ai;
+StartupNotify=false
+X-GNOME-UsesNotifications=false

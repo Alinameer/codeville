@@ -1,0 +1,13 @@
+[Unit]
+Description=Codeville — watch Claude Code work, as a village
+Documentation=https://github.com/Alinameer/codeville
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/codeville-tray
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run the Codeville daemon without the tray (headless; open the printed URL).
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$HERE/daemon"
+exec python3 -m codeville "$@"

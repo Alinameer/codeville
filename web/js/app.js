@@ -41,6 +41,11 @@ function tokenFromLocation() {
   try { return sessionStorage.getItem('codeville.token') || ''; } catch (_) { return ''; }
 }
 
+/** ?theme=light|dark|system overrides the stored choice — handy for screenshots
+ *  and for embedding the village in a kiosk. Read before the query string is
+ *  cleared by tokenFromLocation(). */
+const THEME_OVERRIDE = new URLSearchParams(location.search).get('theme');
+
 const TOKEN = tokenFromLocation();
 let socket = null;
 let reconnectDelay = 500;
@@ -591,6 +596,37 @@ function showTokenHelp() {
 
 /* ----------------------------------------------------------------- boot */
 
+/**
+ * Day/night. Three states, matching the CSS: an explicit choice stamps
+ * data-theme on <html>, and "system" stamps nothing so prefers-color-scheme
+ * decides. The choice is a per-browser convenience, so localStorage is the right
+ * home for it — and it is wrapped because private windows can throw on access.
+ */
+const THEME_KEY = 'codeville.theme';
+const THEME_ICONS = { system: '🌗', light: '🌙', dark: '☀️' };
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
+  else root.removeAttribute('data-theme');
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.textContent = THEME_ICONS[theme] || THEME_ICONS.system;
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* ignore */ }
+}
+
+function storedTheme() {
+  if (THEME_OVERRIDE === 'light' || THEME_OVERRIDE === 'dark' || THEME_OVERRIDE === 'system') {
+    return THEME_OVERRIDE;
+  }
+  try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (_) { return 'system'; }
+}
+
+function cycleTheme() {
+  const order = ['system', 'light', 'dark'];
+  const next = order[(order.indexOf(storedTheme()) + 1) % order.length];
+  applyTheme(next);
+}
+
 function boot() {
   els.sky = document.getElementById('sky');
   els.world = document.getElementById('world');
@@ -612,6 +648,8 @@ function boot() {
     dirtyVillages.add('*');
     queueRepaint();
   });
+  applyTheme(storedTheme());
+  document.getElementById('toggle-theme').addEventListener('click', cycleTheme);
   document.getElementById('drawer-close').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 

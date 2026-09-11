@@ -327,6 +327,13 @@ body {
 
 .cv-char { width: 100%; height: 100%; overflow: visible; display: block; }
 
+/* The cast is painted in light pastels for a white panel; against the night sky
+   they need a little more punch to stay readable. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cv-char { filter: saturate(1.25) brightness(1.12); }
+}
+:root[data-theme="dark"] .cv-char { filter: saturate(1.25) brightness(1.12); }
+
 /* Idle life: everyone breathes, everyone blinks. */
 .cv-bob { animation: cv-breathe 3.2s ease-in-out infinite; transform-origin: 32px 58px; }
 @keyframes cv-breathe {
@@ -366,7 +373,7 @@ body {
   60%      { transform: rotate(5deg); }
 }
 
-.cv-villager[data-state="idle"] { opacity: 0.6; }
+.cv-villager[data-state="idle"] { opacity: 0.72; }
 .cv-villager[data-state="idle"] .cv-bob { animation-duration: 5.5s; }
 
 .cv-villager[data-state="done"] .cv-bob { animation: cv-cheer 0.7s ease-out; }
@@ -408,7 +415,15 @@ body {
   height: 58%;
   pointer-events: none;
   z-index: 0;
+  /* The hill tints are light pastels; at full strength they turn the island
+     into a pale slab against the night sky. */
+  opacity: 0.85;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cv-scenery { opacity: 0.22; }
+}
+:root[data-theme="dark"] .cv-scenery { opacity: 0.22; }
 
 .cv-villager { z-index: 1; }
 
@@ -437,7 +452,7 @@ body {
   background: var(--panel-solid);
   border: 1.5px solid var(--panel-edge);
   box-shadow: var(--shadow-card);
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   line-height: 1.34;
   font-weight: 600;
   color: var(--ink);
