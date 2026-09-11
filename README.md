@@ -76,6 +76,11 @@ Three reasons it exists, in the order they actually mattered:
 
 ![The village at night](docs/images/village-dark.png)
 
+Press **show all** (or open `?all=1`) for every project you have ever run Claude
+Code in. Busy villages rise to the top; quiet ones shrink out of the way.
+
+![Every project at once](docs/images/world-map.png)
+
 ## Installing
 
 Codeville is Linux-only today, because the tray applet is GTK and AppIndicator.

@@ -46,6 +46,10 @@ function tokenFromLocation() {
  *  cleared by tokenFromLocation(). */
 const THEME_OVERRIDE = new URLSearchParams(location.search).get('theme');
 
+/** ?all=1 opens straight to every project, quiet ones included. */
+const SHOW_ALL_OVERRIDE = ['1', 'true', 'yes'].includes(
+  (new URLSearchParams(location.search).get('all') || '').toLowerCase());
+
 const TOKEN = tokenFromLocation();
 let socket = null;
 let reconnectDelay = 500;
@@ -642,6 +646,7 @@ function boot() {
   paintLegend();
   paintStats();
 
+  if (SHOW_ALL_OVERRIDE) els.toggleAll.setAttribute('aria-pressed', 'true');
   els.toggleAll.addEventListener('click', () => {
     const on = els.toggleAll.getAttribute('aria-pressed') === 'true';
     els.toggleAll.setAttribute('aria-pressed', String(!on));

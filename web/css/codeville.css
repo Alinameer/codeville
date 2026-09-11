@@ -312,6 +312,12 @@ body {
   padding: 40px 0;
 }
 
+/* A quiet village needs far less room than a busy one. With 28 projects on
+   screen, full-height empty cards push the active village off the fold. */
+.cv-island--quiet .cv-green { min-height: 0; padding: 10px 10px 16px; }
+.cv-island--quiet .cv-green__empty { padding: 14px 0; }
+.cv-island--quiet .cv-scenery { height: 46%; }
+
 .cv-villager {
   position: relative;
   width: 92px;
