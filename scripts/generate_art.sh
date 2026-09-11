@@ -94,8 +94,14 @@ generate() {
   [ "$frames" = "1" ] && layout="$PROP"
   [ "$frames" = "0" ] && layout="$SCENE"
 
-  local prompt="Use your built-in image_gen tool to generate: ${subject}. ${layout} ${STYLE} \
-Intended use: sprites for a desktop game UI. Save as ${raw}. Reply only with the final file path."
+  # A backdrop is opaque scenery and carries its own style text; giving it the
+  # shared STYLE would also demand a transparent background, and that alpha shows
+  # up as black bands once the image is flattened.
+  local style="$STYLE"
+  [ "$frames" = "0" ] && style=""
+
+  local prompt="Use your built-in image_gen tool to generate: ${subject}. ${layout} ${style} \
+Intended use: art for a desktop game UI. Save as ${raw}. Reply only with the final file path."
 
   echo "  > $name generating..."
   if ! timeout 600 "$CODEX" exec --approve-for-me --skip-git-repo-check "$prompt" >"$RAW/$name.log" 2>&1; then
@@ -118,8 +124,12 @@ Intended use: sprites for a desktop game UI. Save as ${raw}. Reply only with the
 import sys
 from PIL import Image
 src, dst = sys.argv[1], sys.argv[2]
-im = Image.open(src).convert("RGB")
-im.resize((320, 120), Image.LANCZOS).quantize(colors=64).save(dst)
+im = Image.open(src).convert("RGBA")
+# Flatten over sky blue, not black: any alpha the model left behind would
+# otherwise become hard black bands across the top of the scene.
+flat = Image.new("RGBA", im.size, (150, 205, 245, 255))
+flat.alpha_composite(im)
+flat.convert("RGB").resize((320, 120), Image.LANCZOS).quantize(colors=64).save(dst)
 PYEOF
   else
     python3 "$HERE/scripts/make_sprite.py" "$raw" "$final" --frames "$frames" --cell 64 \
