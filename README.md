@@ -7,6 +7,7 @@
 Every repository becomes a floating island. Every agent becomes a villager.
 Every tool call becomes something you can actually see them doing.
 
+[![tests](https://github.com/Alinameer/codeville/actions/workflows/tests.yml/badge.svg)](https://github.com/Alinameer/codeville/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-7C5CFF.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-4FB5A5.svg)](https://www.python.org/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-none-23B89B.svg)](#why-there-are-no-dependencies)
@@ -199,7 +200,7 @@ sprite sheet.
 ## Development
 
 ```bash
-python3 -m unittest discover -s daemon/tests -v   # 186 tests, no test deps either
+python3 -m unittest discover -s daemon/tests -v   # 207 tests, no test deps either
 cd daemon && python3 -m codeville --once          # one scan, print a summary
 cd daemon && python3 -m codeville --print-url     # run in the foreground
 ```

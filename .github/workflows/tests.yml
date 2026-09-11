@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Codeville targets the Python that ships with the distro, so the floor
+        # matters as much as the ceiling.
+        python: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the test suite
+        # No install step: the daemon and its tests are standard library only.
+        run: python -m unittest discover -s daemon/tests -v
+      - name: Check the shell scripts
+        run: |
+          bash -n install.sh
+          bash -n bin/codeville
+          bash -n bin/codeville-tray
