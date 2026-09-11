@@ -27,3 +27,14 @@ jobs:
           bash -n install.sh
           bash -n bin/codeville
           bash -n bin/codeville-tray
+
+      - name: Install into a temp prefix and smoke-test the launcher
+        # install.sh symlinks the launchers, so this catches the case where a
+        # launcher resolves its path relative to the symlink instead of the
+        # checkout — which breaks every fresh install.
+        run: |
+          PREFIX="$RUNNER_TEMP/prefix" bash install.sh < /dev/null
+          cd /    # run from somewhere unrelated to the repo
+          "$RUNNER_TEMP/prefix/bin/codeville" --once
+          cd "$GITHUB_WORKSPACE"
+          PREFIX="$RUNNER_TEMP/prefix" bash install.sh --uninstall < /dev/null

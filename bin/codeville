@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Run the Codeville daemon without the tray (headless; open the printed URL).
+#
+# install.sh symlinks this into ~/.local/bin, so resolve the symlink before
+# locating the repo — $BASH_SOURCE points at the symlink, not the checkout.
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "$SELF")/.." && pwd)"
 cd "$HERE/daemon"
 exec python3 -m codeville "$@"
