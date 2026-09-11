@@ -369,7 +369,11 @@ export class Scene {
       drawFallbackGround(ctx, this.biome, this.time);
     }
 
-    drawStations(ctx);
+    const occupied = new Set();
+    for (const actor of this.actors.values()) {
+      if (actor.station && !actor.leaving) occupied.add(actor.station);
+    }
+    drawStations(ctx, occupied);
 
     // Painter's order: actors lower on screen draw in front.
     const ordered = [...this.actors.values()].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -399,16 +403,43 @@ function drawFallbackGround(ctx, biome, time) {
   for (let x = 0; x < LOGICAL_W; x += 6) ctx.fillRect(x, FLOOR_Y, 3, 2);
 }
 
-/** Small props marking each station, drawn from sprites when available. */
-function drawStations(ctx) {
-  for (const [key, station] of Object.entries(STATIONS)) {
+/** Colours for the drawn station markers, used when a sprite is missing. */
+const STATION_COLORS = {
+  run: '#2B2D42', edit: '#8D99AE', read: '#B08968', write: '#C79A4B',
+  search: '#4A7FA5', web: '#5B5F97', plan: '#9AA0B5', summon: '#B98A2B',
+  ask: '#7C5CFF', mcp: '#3E6D99', other: '#6B7280',
+};
+
+/**
+ * Props marking each station.
+ *
+ * Only stations that something is actually happening at are drawn, so a quiet
+ * village is a quiet field rather than a row of unexplained furniture. A station
+ * without generated art still gets a simple drawn marker — otherwise villagers
+ * walk purposefully towards nothing.
+ */
+function drawStations(ctx, occupied) {
+  for (const key of occupied) {
+    const station = STATIONS[key];
+    if (!station) continue;
     const entry = sprites.get(`station_${key}`);
     if (entry && entry.ready) {
       ctx.save();
       ctx.translate(station.x, station.y);
       drawSheetFrame(ctx, entry.img, 0, 26);
       ctx.restore();
+      continue;
     }
+    ctx.save();
+    ctx.fillStyle = 'rgba(24, 18, 48, 0.16)';
+    ctx.beginPath();
+    ctx.ellipse(station.x, station.y + 1, 13, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = STATION_COLORS[key] || STATION_COLORS.other;
+    ctx.fillRect(station.x - 8, station.y - 11, 16, 11);
+    ctx.fillStyle = 'rgba(255,255,255,.35)';
+    ctx.fillRect(station.x - 5, station.y - 8, 10, 2);
+    ctx.restore();
   }
 }
 
