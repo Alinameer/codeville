@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Codeville runtime state (never commit — derived from private transcripts)
+run/
+*.log
+*.sock
+state.json
+
+.vscode/
+.idea/
+*.swp
+.DS_Store
