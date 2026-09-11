@@ -26,10 +26,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 from .records import (
     describe_agent_meta,
+    is_synthetic,
+    message_id,
     describe_tool_use,
     describe_workflow,
     message_text,
@@ -142,6 +144,10 @@ class Session:
     workflows: Dict[str, dict] = field(default_factory=dict)
     tokens_out: int = 0
     tool_count: int = 0
+    #: message.ids whose usage has already been counted. One API message spans
+    #: many JSONL lines that each repeat the same usage, so counting per line
+    #: inflated the token total by ~2.7x on real transcripts.
+    counted_messages: Set[str] = field(default_factory=set)
 
     @property
     def main_id(self) -> str:
@@ -239,6 +245,27 @@ class World:
             village.sessions[session_id] = session
         return session
 
+    #: Cap on remembered message ids per session, so a long session cannot grow
+    #: the set without bound. Duplicate lines for one message always arrive
+    #: together, so a small window is enough.
+    _COUNTED_WINDOW = 512
+
+    @staticmethod
+    def _count_tokens(session: Session, villager: Villager, record: dict) -> None:
+        """Add this record's usage, but only once per API message."""
+        mid = message_id(record)
+        if mid:
+            if mid in session.counted_messages:
+                return
+            session.counted_messages.add(mid)
+            if len(session.counted_messages) > World._COUNTED_WINDOW:
+                # Drop an arbitrary half; ids are only needed briefly.
+                for stale in list(session.counted_messages)[: World._COUNTED_WINDOW // 2]:
+                    session.counted_messages.discard(stale)
+        out = usage(record).get("output_tokens", 0)
+        villager.tokens_out += out
+        session.tokens_out += out
+
     @staticmethod
     def _set_state(villager: "Villager", state: str) -> List[dict]:
         """Change a villager's state, emitting an event only on a real transition.
@@ -291,15 +318,16 @@ class World:
                                         description="the mayor")
         if created:
             events.append({"t": "agent.spawn", "agent": mayor.to_dict()})
-        mayor.last_seen = stamp
+        mayor.last_seen = max(mayor.last_seen, stamp)
 
         if kind == "assistant":
+            if is_synthetic(record):
+                # A local error banner, not a real turn.
+                return events
             model = model_name(record)
             if model and session.model != model:
                 session.model = model
-            out = usage(record).get("output_tokens", 0)
-            mayor.tokens_out += out
-            session.tokens_out += out
+            self._count_tokens(session, mayor, record)
             events += self._apply_assistant(session, mayor, record, stamp)
         elif kind == "user":
             events += self._apply_tool_results(session, mayor, record, stamp)
@@ -342,7 +370,7 @@ class World:
             villager.tool = described
             villager.tool_count += 1
             session.tool_count += 1
-            villager.last_seen = stamp
+            villager.last_seen = max(villager.last_seen, stamp)
             events.append({"t": "agent.tool", "agent": villager.id,
                            "tool": described, "at": stamp})
             events += self._set_state(villager, WORKING)
@@ -403,13 +431,17 @@ class World:
             events.append({"t": "agent.spawn", "agent": villager.to_dict()})
 
         stamp = record_time(record) or now()
-        villager.last_seen = stamp
+        # Lines are not sorted by timestamp — backward jumps of seconds to hours
+        # occur — so never let a stale record make a live agent look quiet.
+        villager.last_seen = max(villager.last_seen, stamp)
         session.last_activity = max(session.last_activity, stamp)
         self.village(village_slug).last_active = session.last_activity
 
         kind = record_type(record)
         if kind == "assistant":
-            villager.tokens_out += usage(record).get("output_tokens", 0)
+            if is_synthetic(record):
+                return events
+            self._count_tokens(session, villager, record)
             events += self._apply_assistant(session, villager, record, stamp)
         elif kind == "user":
             events += self._apply_tool_results(session, villager, record, stamp)
@@ -472,6 +504,8 @@ class World:
                     events.append({"t": "agent.update", "agent": villager.to_dict()})
             elif entry["kind"] == "result":
                 events += self.finish_agent(village_slug, session_id, agent_id, ok=True)
+            elif entry["kind"] == "failed":
+                events += self.finish_agent(village_slug, session_id, agent_id, ok=False)
         return events
 
     # -- housekeeping ------------------------------------------------------

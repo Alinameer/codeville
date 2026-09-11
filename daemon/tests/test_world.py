@@ -108,14 +108,57 @@ class TestMayorLifecycle(WorldTestCase):
         self.assertEqual(session.branch, "main")
 
     def test_model_and_tokens_accumulate(self):
-        rec = assistant({"type": "text", "text": "x"})
-        rec["message"]["model"] = "claude-opus-5"
-        rec["message"]["usage"] = {"output_tokens": 120}
-        self.feed(rec)
-        self.feed(rec)
+        for n, mid in enumerate(("msg_a", "msg_b")):
+            rec = assistant({"type": "text", "text": "x"})
+            rec["message"]["id"] = mid
+            rec["message"]["model"] = "claude-opus-5"
+            rec["message"]["usage"] = {"output_tokens": 120}
+            self.feed(rec)
         session = self.world.session(VILLAGE, SESSION)
         self.assertEqual(session.model, "claude-opus-5")
         self.assertEqual(session.tokens_out, 240)
+
+    def test_usage_is_counted_once_per_api_message(self):
+        """One API message is written as one JSONL line per content block, each
+        repeating the same usage. Counting per line inflated the real total by
+        about 2.7x."""
+        for block in ({"type": "text", "text": "thinking out loud"},
+                      tool_use(tid="t1"), tool_use(tid="t2")):
+            rec = assistant(block)
+            rec["message"]["id"] = "msg_same"
+            rec["message"]["usage"] = {"output_tokens": 500}
+            self.feed(rec)
+        self.assertEqual(self.world.session(VILLAGE, SESSION).tokens_out, 500)
+
+    def test_records_without_a_message_id_still_count(self):
+        rec = assistant({"type": "text", "text": "x"})
+        rec["message"]["usage"] = {"output_tokens": 70}
+        self.feed(rec)
+        self.feed(rec)
+        self.assertEqual(self.world.session(VILLAGE, SESSION).tokens_out, 140)
+
+    def test_synthetic_error_banners_are_not_turns(self):
+        """`<synthetic>` records are local banners ("you've hit your limit"),
+        not API turns."""
+        rec = assistant({"type": "text", "text": "You've hit your weekly limit"})
+        rec["message"]["model"] = "<synthetic>"
+        rec["message"]["id"] = "msg_syn"
+        rec["message"]["usage"] = {"output_tokens": 9999}
+        self.feed(assistant({"type": "text", "text": "real turn"}))
+        before = self.mayor().say
+        self.assertEqual(self.feed(rec), [])
+        self.assertEqual(self.world.session(VILLAGE, SESSION).tokens_out, 0)
+        self.assertEqual(self.mayor().say, before, "a banner must not become speech")
+
+    def test_out_of_order_records_do_not_rewind_last_seen(self):
+        """Lines are not sorted by timestamp; backward jumps of hours occur. A
+        stale record must not make a live agent look quiet."""
+        self.feed(assistant({"type": "text", "text": "now"},
+                            timestamp="2026-09-11T12:00:00Z"))
+        fresh = self.mayor().last_seen
+        self.feed(assistant({"type": "text", "text": "stale"},
+                            timestamp="2026-09-11T09:00:00Z"))
+        self.assertEqual(self.mayor().last_seen, fresh)
 
     def test_ai_title_updates_the_session(self):
         events = self.feed({"type": "ai-title", "aiTitle": "Refactor the parser"})
@@ -249,6 +292,17 @@ class TestWorkflows(WorldTestCase):
         villager = self.world.session(VILLAGE, SESSION).villagers["a1"]
         self.assertEqual(villager.phase, "Recon")
         self.assertEqual(villager.state, DONE)
+
+    def test_journal_failed_marks_the_agent_failed(self):
+        self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "started", "agent_id": "a1", "label": "x", "phase": "Find"}])
+        events = self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "failed", "agent_id": "a1", "label": "", "phase": ""}])
+        self.assertEqual(kinds(events), ["agent.done"])
+        self.assertFalse(events[0]["ok"])
+        villager = self.world.session(VILLAGE, SESSION).villagers["a1"]
+        self.assertEqual(villager.state, FAILED)
+        self.assertFalse(villager.awaiting_result)
 
     def test_journal_entry_without_agent_id_is_skipped(self):
         self.assertEqual(

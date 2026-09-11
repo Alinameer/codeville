@@ -104,6 +104,28 @@ def model_name(record: dict) -> str:
     return ""
 
 
+def message_id(record: dict) -> str:
+    """The API message id, which several consecutive records can share.
+
+    One assistant API message is written as **one JSONL line per content block**,
+    every line repeating the same ``message.id`` and the same ``message.usage``.
+    Anything counted per line — tokens above all — must be deduplicated on this.
+    """
+    message = record.get("message")
+    if isinstance(message, dict) and isinstance(message.get("id"), str):
+        return message["id"]
+    return ""
+
+
+def is_synthetic(record: dict) -> bool:
+    """True for locally generated banners ("You've hit your weekly limit").
+
+    These are written as assistant records with model ``<synthetic>``; they carry
+    no usage and never happened on the API, so they must not count as turns.
+    """
+    return model_name(record) == "<synthetic>"
+
+
 # --------------------------------------------------------------------------
 # Tool calls
 # --------------------------------------------------------------------------
@@ -370,7 +392,7 @@ def journal_entries(records: Iterable[dict]) -> List[dict]:
         if not isinstance(record, dict):
             continue
         kind = record.get("type")
-        if kind not in ("started", "result", "launched"):
+        if kind not in ("started", "result", "launched", "failed"):
             continue
         out.append({
             "kind": kind,

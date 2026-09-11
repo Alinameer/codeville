@@ -188,6 +188,17 @@ three no longer exist on disk.
 thinking" from "the user walked away". Villagers doze after 45 seconds of quiet and
 are only retired after 15 minutes, rather than vanishing the moment writes stop.
 
+**One API message is many JSONL lines.** An assistant turn is written as one line
+*per content block* — up to 32 of them — each repeating the same `message.id` **and
+the same `message.usage`**. Summing usage per line inflated the token count by 2.7x
+on real transcripts before this was caught, so usage is counted once per
+`message.id`. Records with model `<synthetic>` are local error banners rather than
+API turns, and are skipped entirely.
+
+**Lines are not in timestamp order.** Backward jumps from seconds to hours occur in
+normal transcripts, so timestamps are only ever moved forward — a stale record must
+never make a live agent look quiet.
+
 **The journal is the liveness oracle.** A transcript is only appended to when a turn
 *finishes*. An agent spending three minutes composing a long answer writes nothing at
 all in the meantime — by file activity alone it is indistinguishable from one that
@@ -213,7 +224,7 @@ sprite sheet.
 ## Development
 
 ```bash
-python3 -m unittest discover -s daemon/tests -v   # 211 tests, no test deps either
+python3 -m unittest discover -s daemon/tests -v   # 216 tests, no test deps either
 cd daemon && python3 -m codeville --once          # one scan, print a summary
 cd daemon && python3 -m codeville --print-url     # run in the foreground
 ```
