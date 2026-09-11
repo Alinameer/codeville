@@ -221,6 +221,15 @@ the one exception, and it could never have been a pip dependency anyway.
 
 ## The art
 
+![The cast](docs/images/cast.png)
+
+Each agent type gets its own body. The main thread is the crowned **Mayor**;
+`Explore` is a fennec **Scout** with goggles, `Plan` an **Architect** beaver with a
+blueprint, `code-reviewer` an **Inspector** panda with a magnifying glass,
+`general-purpose` a **Fixer** cat with a wrench, and a workflow agent is a mint
+**Worker**. An agent type Codeville has never seen falls back to the hooded
+**Villager**, so nothing ever goes undrawn.
+
 The cast is generated pixel art, committed to the repo — you do not need any image
 tooling to run Codeville, only to change it.
 
