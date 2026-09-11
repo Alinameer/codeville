@@ -143,22 +143,15 @@ def tool_results(record: dict) -> List[dict]:
 def tool_result_is_error(block: dict) -> bool:
     """Whether a tool_result reports failure.
 
-    Claude Code marks failures with ``is_error``, but some tools report trouble
-    only in their text, so an explicit flag wins and the text is a fallback.
+    Only the explicit flag counts. An earlier version also treated result text
+    beginning with "error" as a failure, but across the corpus ``is_error`` is
+    simply *absent* on normal successes (3821 of them), and plenty of successful
+    output opens by talking about errors — a compiler summary, a log excerpt, a
+    grep for the word. That heuristic made villagers flinch at nothing, which is
+    worse than missing a failure: the flinch is the one animation that exists to
+    tell you something actually went wrong.
     """
-    if block.get("is_error") is True:
-        return True
-    content = block.get("content")
-    if isinstance(content, str):
-        head = content[:200].lstrip().lower()
-        return head.startswith("error:") or head.startswith("error ")
-    if isinstance(content, list):
-        for part in content:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                head = part["text"][:200].lstrip().lower()
-                if head.startswith("error:") or head.startswith("error "):
-                    return True
-    return False
+    return block.get("is_error") is True
 
 
 def _short_path(value: Any, keep: int = 2) -> str:
@@ -176,9 +169,32 @@ def _first_line(value: Any, limit: int = 72) -> str:
     return line[:limit]
 
 
+def _program_name(command: Any, limit: int = 28) -> str:
+    """The program a shell command runs, with every argument discarded.
+
+    Codeville never renders a command body. Arguments routinely contain paths,
+    URLs, hostnames and piped file contents — one real call on the author's
+    machine was `cat google-services.json | python3 -c ...`. Showing the leading
+    token says what kind of work is happening without disclosing any of that.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return ""
+    first = command.strip().split()[0]
+    # Strip env-var prefixes like FOO=bar and a leading path.
+    while "=" in first and not first.startswith("/"):
+        rest = command.strip().split()
+        first = rest[1] if len(rest) > 1 else ""
+        command = " ".join(rest[1:])
+        if not first:
+            return ""
+    name = os.path.basename(first)[:limit]
+    return f"{name} …" if name else ""
+
+
 #: How to build a human label per tool, in priority order of input fields.
 _TOOL_LABELS = {
-    "Bash": lambda i: i.get("description") or _first_line(i.get("command")),
+    # Never the command body — see _program_name.
+    "Bash": lambda i: i.get("description") or _program_name(i.get("command")),
     "Read": lambda i: _short_path(i.get("file_path")),
     "Edit": lambda i: _short_path(i.get("file_path")),
     "Write": lambda i: _short_path(i.get("file_path")),
@@ -190,11 +206,22 @@ _TOOL_LABELS = {
     "Task": lambda i: str(i.get("description") or i.get("subagent_type") or ""),
     "Agent": lambda i: str(i.get("description") or i.get("subagent_type") or ""),
     "Skill": lambda i: str(i.get("skill") or ""),
-    "Workflow": lambda i: str(i.get("name") or i.get("description") or ""),
+    # Measured on real transcripts: a Workflow call carries `script` (42),
+    # `description` (12) or `scriptPath` (3) — `name` never appears, which left
+    # 87% of workflow bubbles blank.
+    "Workflow": lambda i: str(i.get("description")
+                              or _script_label(i.get("scriptPath"))
+                              or i.get("name") or "running a workflow"),
     "TodoWrite": lambda i: _todo_label(i),
     "ToolSearch": lambda i: str(i.get("query") or ""),
     "AskUserQuestion": lambda i: "asking you something",
 }
+
+
+def _script_label(path: Any) -> str:
+    if not isinstance(path, str) or not path:
+        return ""
+    return os.path.splitext(os.path.basename(path))[0][:48]
 
 
 def _todo_label(inputs: dict) -> str:

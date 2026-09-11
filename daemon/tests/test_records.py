@@ -160,8 +160,21 @@ class TestToolLabels(unittest.TestCase):
         self.assertEqual(tool_label("Bash", {"description": "Build it", "command": "make"}),
                          "Build it")
 
-    def test_bash_falls_back_to_first_command_line(self):
-        self.assertEqual(tool_label("Bash", {"command": "make all\nmake test"}), "make all")
+    def test_bash_without_a_description_shows_only_the_program(self):
+        """Never the command body: arguments carry paths, URLs and piped file
+        contents, and the README promises they are not rendered."""
+        self.assertEqual(tool_label("Bash", {"command": "make all\nmake test"}), "make …")
+        self.assertEqual(tool_label("Bash", {"command": "git status --porcelain"}), "git …")
+        self.assertEqual(
+            tool_label("Bash", {"command": "/usr/local/bin/deploy --prod --token=s3cret"}),
+            "deploy …")
+        self.assertEqual(tool_label("Bash", {"command": "FOO=bar npm run build"}), "npm …")
+
+    def test_bash_label_never_contains_arguments(self):
+        leaky = 'cat google-services.json | python3 -c "import json,sys"'
+        label = tool_label("Bash", {"command": leaky})
+        for secret in ("google-services", "json", "import", "--", "|"):
+            self.assertNotIn(secret, label, f"{secret!r} leaked into {label!r}")
 
     def test_file_tools_shorten_paths(self):
         for tool in ("Read", "Edit", "Write"):
@@ -175,6 +188,18 @@ class TestToolLabels(unittest.TestCase):
 
     def test_todowrite_without_items(self):
         self.assertEqual(tool_label("TodoWrite", {"todos": []}), "planning")
+
+    def test_workflow_label_uses_the_fields_that_actually_exist(self):
+        """Measured on real transcripts: a Workflow call carries script /
+        description / scriptPath. `name` never appears, which left 87% of
+        workflow bubbles blank."""
+        self.assertEqual(tool_label("Workflow", {"description": "Recon and design",
+                                                 "script": "export const meta"}),
+                         "Recon and design")
+        self.assertEqual(tool_label("Workflow", {"scriptPath": "/x/y/find-flaky-wf_a1.js"}),
+                         "find-flaky-wf_a1")
+        self.assertEqual(tool_label("Workflow", {"script": "export const meta = {}"}),
+                         "running a workflow")
 
     def test_unknown_tool_uses_generic_fallback(self):
         self.assertEqual(tool_label("Frobnicate", {"description": "doing a thing"}),
@@ -227,10 +252,16 @@ class TestToolResults(unittest.TestCase):
     def test_is_error_flag_wins(self):
         self.assertTrue(tool_result_is_error({"is_error": True, "content": "fine"}))
 
-    def test_error_detected_from_text(self):
-        self.assertTrue(tool_result_is_error({"content": "Error: no such file"}))
-        self.assertTrue(tool_result_is_error(
+    def test_result_text_is_not_used_to_guess_failure(self):
+        """Across the corpus is_error is simply absent on normal successes, and
+        plenty of successful output opens by talking about errors — a compiler
+        summary, a log excerpt, a grep for the word. Guessing from the text made
+        villagers flinch at nothing."""
+        self.assertFalse(tool_result_is_error({"content": "Error: no such file"}))
+        self.assertFalse(tool_result_is_error(
             {"content": [{"type": "text", "text": "error running command"}]}))
+        self.assertTrue(tool_result_is_error(
+            {"is_error": True, "content": "Error: no such file"}))
 
     def test_success_is_not_an_error(self):
         self.assertFalse(tool_result_is_error({"content": "all good"}))
@@ -240,6 +271,7 @@ class TestToolResults(unittest.TestCase):
     def test_word_error_mid_text_is_not_a_failure(self):
         """Avoid false positives — output that merely mentions errors is fine."""
         self.assertFalse(tool_result_is_error({"content": "0 errors, 0 warnings"}))
+        self.assertFalse(tool_result_is_error({"content": "Error budget: 12 remaining"}))
 
 
 class TestAgentMeta(unittest.TestCase):

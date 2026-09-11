@@ -68,8 +68,11 @@ Three reasons it exists, in the order they actually mattered:
 - **What each agent is doing.** A speech bubble carries the tool and a readable
   label: `BASH · Run the test suite`, `EDIT · daemon/world.py`,
   `PLETOR: GENERATE IMAGE · a cat on a bicycle`.
-- **Per-tool animation.** The hammer swings for `Edit`, the terminal flickers for
-  `Bash`, the lens sweeps for `Grep`, the telescope pans for `WebSearch`.
+- **Villagers that actually go and do the work.** Each island is a little pixel
+  scene. When an agent starts a `Bash` call its character *walks to the terminal*
+  and works there; an `Edit` sends it to the forge, a `WebSearch` to the
+  telescope. Agents arrive through the gate and leave when they finish, with a
+  tick or a cross.
 - **Honest numbers.** Villages, how many are busy, agents working, total tool
   calls. Nothing invented — no XP, no coins, no fake progress bars.
 - **Day and night.** Follows your desktop theme, with a manual override.
@@ -216,10 +219,25 @@ The daemon is Python standard library only — including a hand-rolled slice of
 The UI is plain ES modules and CSS served straight from `web/`. The GTK stack is
 the one exception, and it could never have been a pip dependency anyway.
 
-The cast is hand-authored inline SVG. Every body part is its own `<g>` with a
-stable class, so an arm, a head and a held prop animate independently. It stays
-crisp at any zoom, re-themes instantly, and costs a few hundred bytes rather than a
-sprite sheet.
+## The art
+
+The cast is generated pixel art, committed to the repo — you do not need any image
+tooling to run Codeville, only to change it.
+
+`scripts/generate_art.sh` drives the Codex CLI bundled inside the ChatGPT desktop
+app, asking for a four-frame walk cycle per character in one shared house style.
+What comes back is rarely the requested canvas (a 256x64 strip request returned
+1983x793 the first time), so `scripts/make_sprite.py` finds the frames by scanning
+for columns containing opaque pixels, crops them, and lays them out on an exact
+grid with nearest-neighbour scaling so the pixel edges stay hard.
+
+One detail worth keeping: every frame of a sheet is scaled by a **single** factor
+taken from the largest frame. Normalising each frame to fill its own cell is the
+obvious approach and it makes the character visibly pulse as it walks, because the
+model draws some frames slightly smaller than others.
+
+Anything missing falls back to a procedurally drawn shape, so a fresh checkout
+still animates before a single PNG exists.
 
 ## Development
 

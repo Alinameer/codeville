@@ -2,15 +2,20 @@
  * Codeville front end.
  *
  * Holds a mirror of the daemon's world, applies the delta events it streams, and
- * repaints. The daemon is the single source of truth: this module never invents
- * state, it only reflects what Claude Code actually did.
+ * keeps each village's pixel scene in sync. The daemon is the single source of
+ * truth: this module never invents state, it only reflects what Claude Code did.
  *
- * Rendering is deliberately dumb-but-targeted. A village repaints only when one of
- * its own villagers changes, so a busy workflow in one repo does not cause the
- * other 28 villages to re-render.
+ * Village nodes are created **once and updated in place**. An earlier version
+ * rebuilt a village's DOM on every change, which threw away its canvas and with
+ * it every actor's position — characters teleported instead of walking. Now the
+ * card's text is patched and the scene is handed the new agent list, so actors
+ * keep their place in the world and walk to wherever the work moved.
  */
 
-import { avatarSvg, characterSvg, PROPS, SPECIES, speciesFor, speciesLabel } from './characters.js';
+import { avatarSvg, SPECIES, speciesFor, speciesLabel } from './characters.js';
+import {
+  LOGICAL_H, LOGICAL_W, Scene, loadSprite, registerScene, unregisterScene,
+} from './scene.js';
 
 /* --------------------------------------------------------------- state */
 
@@ -18,49 +23,57 @@ const state = {
   villages: new Map(),   // slug -> village (with sessions[])
   agents: new Map(),     // agentId -> {agent, villageSlug}
   stats: {},
-  connected: false,
 };
 
 const els = {};
-const dirtyVillages = new Set();
+const nodes = new Map();   // slug -> {root, scene, sign, badge, path, bubble}
+const dirty = new Set();
 let repaintQueued = false;
-let bubbleTimers = new Map();
+
+/* --------------------------------------------------------------- sprites */
+
+const SPRITE_NAMES = [
+  'mayor', 'worker', 'explorer', 'planner', 'reviewer',
+  'generalist', 'guide', 'tinkerer', 'villager',
+  'station_run', 'station_edit', 'station_read',
+  'station_write', 'station_search', 'station_web',
+];
+
+function preloadSprites() {
+  for (const name of SPRITE_NAMES) loadSprite(name, `assets/sprites/${name}.png`);
+}
 
 /* ---------------------------------------------------------- connection */
 
 function tokenFromLocation() {
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
-    // Keep it out of the visible URL and out of history once we have it.
     try {
       sessionStorage.setItem('codeville.token', fromQuery);
-      history.replaceState(null, '', location.pathname);
+      const keep = new URLSearchParams(location.search);
+      keep.delete('token');
+      const suffix = keep.toString();
+      history.replaceState(null, '', location.pathname + (suffix ? '?' + suffix : ''));
     } catch (_) { /* private mode: carry on with the in-memory value */ }
     return fromQuery;
   }
   try { return sessionStorage.getItem('codeville.token') || ''; } catch (_) { return ''; }
 }
 
-/** ?theme=light|dark|system overrides the stored choice — handy for screenshots
- *  and for embedding the village in a kiosk. Read before the query string is
- *  cleared by tokenFromLocation(). */
-const THEME_OVERRIDE = new URLSearchParams(location.search).get('theme');
-
-/** ?all=1 opens straight to every project, quiet ones included. */
-const SHOW_ALL_OVERRIDE = ['1', 'true', 'yes'].includes(
-  (new URLSearchParams(location.search).get('all') || '').toLowerCase());
-
+const PARAMS = new URLSearchParams(location.search);
+const THEME_OVERRIDE = PARAMS.get('theme');
+const SHOW_ALL_OVERRIDE = ['1', 'true', 'yes'].includes((PARAMS.get('all') || '').toLowerCase());
 const TOKEN = tokenFromLocation();
+
 let socket = null;
 let reconnectDelay = 500;
 
 function connect() {
   if (!TOKEN) { setConnection('down', 'no token'); showTokenHelp(); return; }
-  const url = `ws://${location.host}/ws?token=${encodeURIComponent(TOKEN)}`;
   setConnection('wait', 'connecting');
-
-  try { socket = new WebSocket(url); }
-  catch (err) { scheduleReconnect(); return; }
+  try {
+    socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(TOKEN)}`);
+  } catch (_) { scheduleReconnect(); return; }
 
   socket.addEventListener('open', () => {
     reconnectDelay = 500;
@@ -81,7 +94,6 @@ function scheduleReconnect() {
 }
 
 function setConnection(kind, label) {
-  state.connected = kind === 'live';
   if (!els.conn) return;
   els.conn.className = `cv-conn cv-conn--${kind === 'live' ? 'live' : kind === 'down' ? 'down' : 'wait'}`;
   els.conn.querySelector('.cv-conn__text').textContent = label;
@@ -91,22 +103,14 @@ function setConnection(kind, label) {
 
 function handleEvent(event) {
   switch (event.t) {
-    case 'hello':
-      loadSnapshot(event);
-      break;
-    case 'village.upsert':
-      upsertVillage(event.village);
-      break;
+    case 'hello': loadSnapshot(event); break;
+    case 'village.upsert': upsertVillage(event.village); break;
     case 'session.update':
       withSession(event.village, event.session, (s) => { if (event.title) s.title = event.title; });
       break;
-    case 'session.end':
-      removeSession(event.village, event.session);
-      break;
+    case 'session.end': removeSession(event.village, event.session); break;
     case 'agent.spawn':
-    case 'agent.update':
-      upsertAgent(event.agent);
-      break;
+    case 'agent.update': upsertAgent(event.agent); break;
     case 'agent.state':
       patchAgent(event.agent, (a) => { a.state = event.state; if (event.state !== 'working') a.tool = null; });
       break;
@@ -116,15 +120,11 @@ function handleEvent(event) {
     case 'agent.tool_end':
       patchAgent(event.agent, (a) => { a.lastOk = event.ok; });
       break;
-    case 'agent.say':
-      patchAgent(event.agent, (a) => { a.say = event.text; });
-      break;
+    case 'agent.say': patchAgent(event.agent, (a) => { a.say = event.text; }); break;
     case 'agent.done':
       patchAgent(event.agent, (a) => { a.state = event.ok ? 'done' : 'failed'; a.tool = null; });
       break;
-    case 'agent.despawn':
-      removeAgent(event.agent);
-      break;
+    case 'agent.despawn': removeAgent(event.agent); break;
     case 'workflow.start':
     case 'workflow.update':
       withSession(event.village, event.session, (s) => {
@@ -132,8 +132,7 @@ function handleEvent(event) {
         s.workflows.push(event.workflow);
       });
       break;
-    default:
-      return;
+    default: return;
   }
   recomputeStats();
   queueRepaint();
@@ -144,7 +143,7 @@ function loadSnapshot(snapshot) {
   state.agents.clear();
   for (const village of snapshot.villages || []) upsertVillage(village, true);
   state.stats = snapshot.stats || {};
-  dirtyVillages.add('*');
+  dirty.add('*');
   queueRepaint();
 }
 
@@ -154,12 +153,13 @@ function upsertVillage(incoming, withSessions = false) {
     const village = { ...incoming, sessions: incoming.sessions || [] };
     state.villages.set(village.slug, village);
     indexVillageAgents(village);
-    dirtyVillages.add('*');
+    dirty.add('*');
     return;
   }
-  Object.assign(existing, { ...incoming, sessions: withSessions && incoming.sessions ? incoming.sessions : existing.sessions });
+  const sessions = withSessions && incoming.sessions ? incoming.sessions : existing.sessions;
+  Object.assign(existing, incoming, { sessions });
   if (withSessions && incoming.sessions) indexVillageAgents(existing);
-  dirtyVillages.add(existing.slug);
+  dirty.add(existing.slug);
 }
 
 function indexVillageAgents(village) {
@@ -180,7 +180,7 @@ function withSession(slug, sessionId, fn) {
     village.sessions.push(session);
   }
   fn(session);
-  dirtyVillages.add(slug);
+  dirty.add(slug);
 }
 
 function upsertAgent(agent) {
@@ -188,11 +188,9 @@ function upsertAgent(agent) {
   const known = state.agents.get(agent.id);
   if (known) {
     Object.assign(known.agent, agent);
-    dirtyVillages.add(known.villageSlug);
+    dirty.add(known.villageSlug);
     return;
   }
-  // A brand-new agent: attach it to its session, creating it if the session
-  // event has not arrived yet (events can interleave).
   const slug = findVillageForSession(agent.session);
   if (!slug) return;
   withSession(slug, agent.session, (session) => {
@@ -200,16 +198,15 @@ function upsertAgent(agent) {
     session.villagers.push(agent);
   });
   state.agents.set(agent.id, { agent, villageSlug: slug });
-  dirtyVillages.add(slug);
+  dirty.add(slug);
 }
 
 function findVillageForSession(sessionId) {
   for (const village of state.villages.values()) {
     if ((village.sessions || []).some((s) => s.id === sessionId)) return village.slug;
   }
-  // Unknown session: park it in the most recently active village so the agent is
-  // still visible rather than silently dropped.
-  const newest = [...state.villages.values()].sort((a, b) => (b.last_active || 0) - (a.last_active || 0))[0];
+  const newest = [...state.villages.values()]
+    .sort((a, b) => (b.last_active || 0) - (a.last_active || 0))[0];
   return newest ? newest.slug : null;
 }
 
@@ -217,7 +214,7 @@ function patchAgent(agentId, fn) {
   const known = state.agents.get(agentId);
   if (!known) return;
   fn(known.agent);
-  dirtyVillages.add(known.villageSlug);
+  dirty.add(known.villageSlug);
 }
 
 function removeAgent(agentId) {
@@ -230,7 +227,7 @@ function removeAgent(agentId) {
     }
   }
   state.agents.delete(agentId);
-  dirtyVillages.add(known.villageSlug);
+  dirty.add(known.villageSlug);
 }
 
 function removeSession(slug, sessionId) {
@@ -239,16 +236,16 @@ function removeSession(slug, sessionId) {
   const session = (village.sessions || []).find((s) => s.id === sessionId);
   for (const agent of (session && session.villagers) || []) state.agents.delete(agent.id);
   village.sessions = (village.sessions || []).filter((s) => s.id !== sessionId);
-  dirtyVillages.add(slug);
+  dirty.add(slug);
 }
 
 function recomputeStats() {
   let working = 0;
   let live = 0;
   for (const village of state.villages.values()) {
-    const busy = agentsOf(village).filter((a) => !isFinished(a)).length;
-    if (busy) live += 1;
-    working += agentsOf(village).filter((a) => a.state === 'working').length;
+    const agents = agentsOf(village);
+    if (agents.some((a) => !isFinished(a) && a.state !== 'idle')) live += 1;
+    working += agents.filter((a) => a.state === 'working').length;
   }
   state.stats = {
     ...state.stats,
@@ -265,30 +262,28 @@ const agentsOf = (village) => (village.sessions || []).flatMap((s) => s.villager
 const STATE_ORDER = { working: 0, thinking: 1, spawning: 2, failed: 3, done: 4, idle: 5 };
 
 /**
- * Which villagers actually earn a spot on the green.
+ * Which villagers earn a place on the green.
  *
- * A village accumulates one mayor per session, so an old repo can end up with a
- * row of identical dozing mayors that say nothing about what is happening. Show
- * everyone who is doing something, plus the current session's mayor even when it
- * is waiting on you — and leave the rest off the green. They are all still listed
- * in the drawer.
+ * A village accumulates one mayor per session, so an old repo ends up with a row
+ * of identical dozing mayors that say nothing. Show everyone doing something,
+ * plus the current session's mayor even when it is waiting on you.
  */
 function visibleAgents(village) {
   const sessions = [...(village.sessions || [])]
     .sort((a, b) => (b.last_activity || 0) - (a.last_activity || 0));
-  const newest = sessions[0];
   const keep = new Map();
-
   for (const session of sessions) {
     for (const agent of session.villagers || []) {
       if (agent.state !== 'idle') keep.set(agent.id, agent);
     }
   }
-  for (const agent of (newest && newest.villagers) || []) {
+  for (const agent of (sessions[0] && sessions[0].villagers) || []) {
     if (agent.agent_type === 'mayor') keep.set(agent.id, agent);
   }
-  return [...keep.values()].sort(
-    (a, b) => (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9));
+  return [...keep.values()]
+    .sort((a, b) => (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9))
+    .slice(0, 16)
+    .map((a) => ({ ...a, species: speciesFor(a.agent_type) }));
 }
 
 /* ------------------------------------------------------------ rendering */
@@ -296,77 +291,167 @@ function visibleAgents(village) {
 function queueRepaint() {
   if (repaintQueued) return;
   repaintQueued = true;
-  requestAnimationFrame(() => {
-    repaintQueued = false;
-    paint();
-  });
+  requestAnimationFrame(() => { repaintQueued = false; paint(); });
 }
 
 function paint() {
   paintStats();
-  const full = dirtyVillages.has('*');
-  if (full) {
-    paintWorld();
-  } else {
-    for (const slug of dirtyVillages) paintVillage(slug);
-  }
-  dirtyVillages.clear();
+  const full = dirty.has('*');
+  const slugs = full ? [...state.villages.keys()] : [...dirty];
+  if (full) reflowWorld();
+  for (const slug of slugs) updateVillage(slug);
+  dirty.clear();
 }
 
 function paintStats() {
   if (!els.stats) return;
   const s = state.stats || {};
   const items = [
-    ['villages', s.villages || 0, 'villages'],
-    ['live', s.villages_live || 0, 'busy'],
-    ['agents', s.agents_working || 0, 'working'],
-    ['tools', s.tool_calls || 0, 'tool calls'],
+    [s.villages || 0, 'villages', false],
+    [s.villages_live || 0, 'busy', true],
+    [s.agents_working || 0, 'working', true],
+    [s.tool_calls || 0, 'tool calls', false],
   ];
-  els.stats.innerHTML = items.map(([key, value, label]) => `
-    <div class="cv-stat ${key === 'live' || key === 'agents' ? 'cv-stat--live' : ''}">
+  els.stats.innerHTML = items.map(([value, label, live]) => `
+    <div class="cv-stat ${live ? 'cv-stat--live' : ''}">
       <span class="cv-stat__value">${formatNumber(value)}</span>
       <span class="cv-stat__label">${label}</span>
     </div>`).join('');
 }
 
 function formatNumber(n) {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
 }
 
 function sortedVillages() {
   const showAll = els.toggleAll && els.toggleAll.getAttribute('aria-pressed') === 'true';
   const all = [...state.villages.values()];
-  const visible = showAll ? all : all.filter((v) => agentsOf(v).length > 0 || v.busy > 0);
-  return visible.sort((a, b) => {
-    const busyDiff = agentsOf(b).filter((x) => !isFinished(x)).length
-                   - agentsOf(a).filter((x) => !isFinished(x)).length;
-    if (busyDiff) return busyDiff;
-    return (b.last_active || 0) - (a.last_active || 0);
-  });
+  const busyCount = (v) => agentsOf(v).filter((a) => !isFinished(a) && a.state !== 'idle').length;
+  const visible = showAll ? all : all.filter((v) => visibleAgents(v).length > 0);
+  return visible.sort((a, b) =>
+    busyCount(b) - busyCount(a) || (b.last_active || 0) - (a.last_active || 0));
 }
 
-function paintWorld() {
+/** Rebuild the grid order, reusing every existing village node. */
+function reflowWorld() {
   const villages = sortedVillages();
   if (!villages.length) {
+    for (const slug of [...nodes.keys()]) destroyVillage(slug);
     els.world.innerHTML = '';
     els.world.appendChild(emptyState());
     return;
   }
-  els.world.innerHTML = '';
-  villages.forEach((village, index) => {
-    els.world.appendChild(villageElement(village, index));
-  });
+  const empty = els.world.querySelector('.cv-empty');
+  if (empty) empty.remove();
+
+  const wanted = new Set(villages.map((v) => v.slug));
+  for (const slug of [...nodes.keys()]) if (!wanted.has(slug)) destroyVillage(slug);
+
+  for (const village of villages) {
+    // Appending a node that is already in the DOM moves it, keeping its canvas.
+    els.world.appendChild(ensureVillage(village).root);
+  }
 }
 
-function paintVillage(slug) {
+function ensureVillage(village) {
+  let node = nodes.get(village.slug);
+  if (node) return node;
+
+  const root = document.createElement('button');
+  root.type = 'button';
+  root.className = 'cv-island';
+  root.dataset.village = village.slug;
+  root.innerHTML = `
+    <div class="cv-land">
+      <div class="cv-plate">
+        <div class="cv-plate__turf"></div>
+        <div class="cv-plate__head">
+          <span class="cv-sign"></span>
+          <span class="cv-plate__meta"><span class="cv-badge"></span></span>
+        </div>
+        <div class="cv-plate__path"></div>
+        <div class="cv-stage">
+          <canvas class="cv-canvas" width="${LOGICAL_W}" height="${LOGICAL_H}"></canvas>
+          <div class="cv-bubble" hidden></div>
+        </div>
+      </div>
+      ${rockSvg()}
+    </div>`;
+
+  const scene = new Scene(root.querySelector('.cv-canvas'), { biome: village.biome });
+  registerScene(scene);
+
+  node = {
+    root,
+    scene,
+    sign: root.querySelector('.cv-sign'),
+    badge: root.querySelector('.cv-badge'),
+    path: root.querySelector('.cv-plate__path'),
+    bubble: root.querySelector('.cv-bubble'),
+  };
+  root.addEventListener('click', () => openDrawer(village.slug));
+  nodes.set(village.slug, node);
+  return node;
+}
+
+function destroyVillage(slug) {
+  const node = nodes.get(slug);
+  if (!node) return;
+  unregisterScene(node.scene);
+  node.root.remove();
+  nodes.delete(slug);
+}
+
+function updateVillage(slug) {
   const village = state.villages.get(slug);
-  const node = els.world.querySelector(`[data-village="${cssEscape(slug)}"]`);
-  if (!village || !node) { paintWorld(); return; }
-  const index = Number(node.dataset.index || 0);
-  const replacement = villageElement(village, index);
-  node.replaceWith(replacement);
+  const node = nodes.get(slug);
+  if (!village || !node) return;
+
+  const agents = visibleAgents(village);
+  const busy = agents.filter((a) => !isFinished(a) && a.state !== 'idle');
+
+  node.root.classList.toggle('cv-island--quiet', busy.length === 0);
+  node.root.classList.toggle('cv-island--gone', village.exists === false);
+  node.root.setAttribute('aria-label', `${village.name}: ${busy.length} working`);
+
+  setText(node.sign, village.name);
+  node.sign.title = village.name;
+  setText(node.path, village.path || 'path unknown');
+  node.path.title = village.path || '';
+
+  setText(node.badge, busy.length ? `${busy.length} working` : 'quiet');
+  node.badge.classList.toggle('cv-badge--idle', busy.length === 0);
+
+  node.scene.biome = village.biome || node.scene.biome;
+  node.scene.syncAgents(agents);
+
+  // One bubble per village: with a workflow running, one per villager would
+  // cover the whole island and its neighbours.
+  const speaker = agents.find((a) => a.state === 'working' && a.tool);
+  if (speaker) {
+    node.bubble.hidden = false;
+    node.bubble.classList.toggle('cv-bubble--error', speaker.lastOk === false);
+    node.bubble.innerHTML =
+      `<span class="cv-bubble__tool">${escapeHtml(speaker.tool.display || '')}</span>`
+      + escapeHtml(truncate(speaker.tool.label || speaker.tool.display || '', 70));
+  } else {
+    node.bubble.hidden = true;
+  }
+}
+
+function setText(el, value) {
+  if (el.textContent !== value) el.textContent = value;
+}
+
+function rockSvg() {
+  return `<svg class="cv-land__rock" viewBox="0 0 200 62" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 0 H200 L186 20 Q168 34 142 33 L116 54 Q104 66 94 54 L66 32 Q34 30 14 17 Z"
+          fill="var(--rock)"/>
+    <path d="M0 0 H200 L186 20 Q168 34 142 33 L128 44 Q96 40 66 32 Q34 30 14 17 Z"
+          fill="var(--rock-deep)" opacity=".45"/>
+  </svg>`;
 }
 
 function emptyState() {
@@ -378,136 +463,6 @@ function emptyState() {
     <p>Start Claude Code in any repository and its village will appear here,
        with a villager for every agent at work.</p>`;
   return div;
-}
-
-function villageElement(village, index) {
-  const agents = visibleAgents(village);
-  const busy = agentsOf(village).filter((a) => !isFinished(a) && a.state !== 'idle');
-  const node = document.createElement('button');
-  node.className = 'cv-island'
-    + (busy.length ? '' : ' cv-island--quiet')
-    + (village.exists === false ? ' cv-island--gone' : '');
-  node.dataset.village = village.slug;
-  node.dataset.index = String(index);
-  node.style.setProperty('--float-delay', `${(index % 5) * 0.55}s`);
-  node.type = 'button';
-  node.setAttribute('aria-label', `${village.name}: ${busy.length} working`);
-
-  node.innerHTML = `
-    <div class="cv-land">
-      <div class="cv-plate">
-        <div class="cv-plate__turf"></div>
-        <div class="cv-plate__head">
-          <span class="cv-sign" title="${escapeHtml(village.name)}">${escapeHtml(village.name)}</span>
-          <span class="cv-plate__meta">
-            ${busy.length
-              ? `<span class="cv-badge">${busy.length} working</span>`
-              : `<span class="cv-badge cv-badge--idle">quiet</span>`}
-          </span>
-        </div>
-        <div class="cv-plate__path" title="${escapeHtml(village.path || '')}">${escapeHtml(village.path || 'path unknown')}</div>
-        <div class="cv-green"></div>
-      </div>
-      ${rockSvg()}
-    </div>`;
-
-  const green = node.querySelector('.cv-green');
-  green.insertAdjacentHTML('afterbegin', scenerySvg(village.biome));
-
-  // One speech bubble per village, not one per villager: with a workflow running
-  // a dozen bubbles would cover the whole island and overlap its neighbours.
-  const speaker = agents.find((a) => a.state === 'working' && a.tool);
-  if (speaker) {
-    const bubble = document.createElement('div');
-    bubble.className = 'cv-bubble' + (speaker.lastOk === false ? ' cv-bubble--error' : '');
-    bubble.innerHTML =
-      `<span class="cv-bubble__tool">${escapeHtml(speaker.tool.display || '')}</span>`
-      + escapeHtml(truncate(speaker.tool.label || speaker.tool.display || '', 70));
-    green.appendChild(bubble);
-  }
-
-  if (!agents.length) {
-    green.innerHTML = `<div class="cv-green__empty">no one about</div>`;
-  } else {
-    for (const agent of agents.slice(0, 14)) green.appendChild(villagerElement(agent));
-    if (agents.length > 14) {
-      const more = document.createElement('div');
-      more.className = 'cv-green__empty';
-      more.textContent = `+${agents.length - 14} more`;
-      green.appendChild(more);
-    }
-  }
-
-  node.addEventListener('click', () => openDrawer(village.slug));
-  return node;
-}
-
-/**
- * The underside of a floating island: a lump of rock tapering to a point, with a
- * couple of smaller shards drifting beneath it. Drawn with `preserveAspectRatio`
- * off so it stretches to whatever width the grid gives the card.
- */
-function rockSvg() {
-  return `<svg class="cv-land__rock" viewBox="0 0 200 62" preserveAspectRatio="none" aria-hidden="true">
-    <path d="M0 0 H200 L186 20 Q168 34 142 33 L116 54 Q104 66 94 54 L66 32 Q34 30 14 17 Z"
-          fill="var(--rock)"/>
-    <path d="M0 0 H200 L186 20 Q168 34 142 33 L128 44 Q96 40 66 32 Q34 30 14 17 Z"
-          fill="var(--rock-deep)" opacity=".45"/>
-    <ellipse cx="42" cy="9" rx="17" ry="5" fill="var(--grass-deep)" opacity=".55"/>
-    <ellipse cx="150" cy="10" rx="13" ry="4" fill="var(--grass-deep)" opacity=".4"/>
-  </svg>`;
-}
-
-/**
- * The land behind the villagers: soft rolling hills in the village's biome colour.
- *
- * Deliberately just a horizon. An earlier version drew trees and a hut, but at card
- * width they scaled into floating lollipops and competed with the characters — who
- * are the thing you are actually meant to be watching.
- */
-function scenerySvg(biome) {
-  const tint = BIOME_TINTS[biome] || BIOME_TINTS.meadow;
-  return `<svg class="cv-scenery" viewBox="0 0 320 90" preserveAspectRatio="none" aria-hidden="true">
-    <path d="M0 90 V56 q40-16 82-6 t74 4 q44-14 86-4 t78 12 V90z" fill="${tint.far}"/>
-    <path d="M0 90 V70 q52-14 96-4 t84 2 q40-10 76-2 t64 8 V90z" fill="${tint.near}"/>
-  </svg>`;
-}
-
-/** One palette per biome — the language census picks which a village gets. */
-const BIOME_TINTS = {
-  meadow:   { far: '#d8f5de', near: '#b4e9bf' },
-  forest:   { far: '#cdeed6', near: '#9fdcaf' },
-  harbor:   { far: '#d5eefb', near: '#aadcf1' },
-  canyon:   { far: '#fbe2cd', near: '#f3c8a4' },
-  tundra:   { far: '#e6f3fa', near: '#c8e2ef' },
-  citadel:  { far: '#e8e3f8', near: '#cfc6ee' },
-  cliffs:   { far: '#ffe6dd', near: '#fcc8b8' },
-  orchard:  { far: '#ffe7ef', near: '#ffc6d9' },
-  bazaar:   { far: '#fff0d5', near: '#fbdca6' },
-  foundry:  { far: '#e6e8ee', near: '#ccd0da' },
-  workshop: { far: '#ece8f9', near: '#d3cbee' },
-};
-
-function villagerElement(agent) {
-  const species = speciesFor(agent.agent_type);
-  const node = document.createElement('div');
-  node.className = 'cv-villager';
-  node.dataset.state = agent.state || 'idle';
-  node.dataset.agent = agent.id;
-  node.title = describeAgent(agent);
-
-  const category = agent.tool && agent.tool.category ? agent.tool.category : null;
-  node.innerHTML = characterSvg({ species, toolCategory: category });
-
-  return node;
-}
-
-function describeAgent(agent) {
-  const bits = [speciesLabel(speciesFor(agent.agent_type))];
-  if (agent.description) bits.push(agent.description);
-  if (agent.phase) bits.push(`phase: ${agent.phase}`);
-  bits.push(`${agent.tool_count || 0} tool calls`);
-  return bits.join(' — ');
 }
 
 /* --------------------------------------------------------------- drawer */
@@ -551,23 +506,28 @@ function paintLegend() {
     </div>`).join('');
 }
 
-/* --------------------------------------------------------------- sky */
+/* ----------------------------------------------------------------- theme */
 
-function paintClouds() {
-  const sky = els.sky;
-  const count = 7;
-  for (let i = 0; i < count; i += 1) {
-    const cloud = document.createElement('div');
-    cloud.className = 'cv-cloud';
-    const height = 26 + (i % 3) * 16;
-    cloud.style.height = `${height}px`;
-    cloud.style.width = `${height * (2.6 + (i % 4) * 0.5)}px`;
-    cloud.style.top = `${6 + i * 12}%`;
-    cloud.style.animationDuration = `${70 + i * 22}s`;
-    cloud.style.animationDelay = `${-i * 14}s`;
-    cloud.style.opacity = String(0.5 + (i % 3) * 0.14);
-    sky.appendChild(cloud);
-  }
+const THEME_KEY = 'codeville.theme';
+const THEME_ICONS = { system: '🌗', light: '🌙', dark: '☀️' };
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
+  else root.removeAttribute('data-theme');
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.textContent = THEME_ICONS[theme] || THEME_ICONS.system;
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* ignore */ }
+}
+
+function storedTheme() {
+  if (['light', 'dark', 'system'].includes(THEME_OVERRIDE)) return THEME_OVERRIDE;
+  try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (_) { return 'system'; }
+}
+
+function cycleTheme() {
+  const order = ['system', 'light', 'dark'];
+  applyTheme(order[(order.indexOf(storedTheme()) + 1) % order.length]);
 }
 
 /* --------------------------------------------------------------- utils */
@@ -583,10 +543,6 @@ function truncate(text, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
-function cssEscape(value) {
-  return String(value).replace(/["\\]/g, '\\$&');
-}
-
 function showTokenHelp() {
   els.world.innerHTML = '';
   const div = document.createElement('div');
@@ -600,39 +556,7 @@ function showTokenHelp() {
 
 /* ----------------------------------------------------------------- boot */
 
-/**
- * Day/night. Three states, matching the CSS: an explicit choice stamps
- * data-theme on <html>, and "system" stamps nothing so prefers-color-scheme
- * decides. The choice is a per-browser convenience, so localStorage is the right
- * home for it — and it is wrapped because private windows can throw on access.
- */
-const THEME_KEY = 'codeville.theme';
-const THEME_ICONS = { system: '🌗', light: '🌙', dark: '☀️' };
-
-function applyTheme(theme) {
-  const root = document.documentElement;
-  if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
-  else root.removeAttribute('data-theme');
-  const icon = document.getElementById('theme-icon');
-  if (icon) icon.textContent = THEME_ICONS[theme] || THEME_ICONS.system;
-  try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* ignore */ }
-}
-
-function storedTheme() {
-  if (THEME_OVERRIDE === 'light' || THEME_OVERRIDE === 'dark' || THEME_OVERRIDE === 'system') {
-    return THEME_OVERRIDE;
-  }
-  try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (_) { return 'system'; }
-}
-
-function cycleTheme() {
-  const order = ['system', 'light', 'dark'];
-  const next = order[(order.indexOf(storedTheme()) + 1) % order.length];
-  applyTheme(next);
-}
-
 function boot() {
-  els.sky = document.getElementById('sky');
   els.world = document.getElementById('world');
   els.stats = document.getElementById('stats');
   els.conn = document.getElementById('conn');
@@ -642,21 +566,24 @@ function boot() {
   els.legend = document.getElementById('legend-grid');
   els.toggleAll = document.getElementById('toggle-all');
 
-  paintClouds();
+  preloadSprites();
   paintLegend();
   paintStats();
+  applyTheme(storedTheme());
 
   if (SHOW_ALL_OVERRIDE) els.toggleAll.setAttribute('aria-pressed', 'true');
   els.toggleAll.addEventListener('click', () => {
     const on = els.toggleAll.getAttribute('aria-pressed') === 'true';
     els.toggleAll.setAttribute('aria-pressed', String(!on));
-    dirtyVillages.add('*');
+    dirty.add('*');
     queueRepaint();
   });
-  applyTheme(storedTheme());
   document.getElementById('toggle-theme').addEventListener('click', cycleTheme);
   document.getElementById('drawer-close').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+  window.addEventListener('resize', () => {
+    for (const node of nodes.values()) node.scene.resize();
+  });
 
   connect();
 }

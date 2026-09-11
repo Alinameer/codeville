@@ -293,6 +293,28 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* ------------------------------------------------------------- Pixel stage */
+
+.cv-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 320 / 180;
+  overflow: hidden;
+  border-top: 1px solid color-mix(in srgb, var(--panel-edge) 60%, transparent);
+}
+
+.cv-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The scene is drawn at 320x180 and blown up by an integer factor; smoothing
+     would turn crisp pixel art into mush. */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.cv-island--quiet .cv-stage { aspect-ratio: 320 / 96; }
+
 /* -------------------------------------------------------------- Village green */
 
 .cv-green {
@@ -448,12 +470,12 @@ body {
 .cv-bubble {
   position: absolute;
   left: 50%;
-  top: 4px;
+  top: 6px;
   transform: translateX(-50%);
   z-index: 6;
   width: max-content;
-  max-width: calc(100% - 24px);
-  padding: 6px 11px;
+  max-width: calc(100% - 20px);
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   background: var(--panel-solid);
   border: 1.5px solid var(--panel-edge);
