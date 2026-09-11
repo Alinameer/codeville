@@ -1,2 +1,55 @@
-<!doctype html><meta charset="utf-8"><title>Codeville</title>
-<body style="font:14px system-ui;padding:2rem">placeholder — the village UI lands here</body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Codeville</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%237C5CFF'/%3E%3Ccircle cx='24' cy='28' r='6' fill='white'/%3E%3Ccircle cx='42' cy='28' r='6' fill='white'/%3E%3Cpath d='M20 44q12 9 24 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/codeville.css">
+</head>
+<body>
+  <div class="cv-sky" id="sky" aria-hidden="true"></div>
+
+  <header class="cv-hud">
+    <div class="cv-brand">
+      <span class="cv-brand__mark" aria-hidden="true">🏘️</span>
+      <span>
+        Codeville
+        <span class="cv-brand__sub">every repo a village</span>
+      </span>
+    </div>
+
+    <div class="cv-stats" id="stats"></div>
+
+    <button class="cv-btn" id="toggle-all" aria-pressed="false"
+            title="Show every project, including the quiet ones">
+      show all
+    </button>
+
+    <div class="cv-conn cv-conn--wait" id="conn">
+      <span class="cv-conn__dot" aria-hidden="true"></span>
+      <span class="cv-conn__text">connecting</span>
+    </div>
+  </header>
+
+  <main class="cv-main">
+    <div class="cv-world" id="world"></div>
+
+    <section class="cv-legend">
+      <h2>Who lives here</h2>
+      <div class="cv-legend__grid" id="legend-grid"></div>
+    </section>
+  </main>
+
+  <aside class="cv-drawer" id="drawer" data-open="false" aria-label="Village detail">
+    <div class="cv-drawer__head">
+      <strong class="cv-drawer__title" id="drawer-title">Village</strong>
+      <button class="cv-btn cv-drawer__close" id="drawer-close">close</button>
+    </div>
+    <div class="cv-roster" id="roster"></div>
+  </aside>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
