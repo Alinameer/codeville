@@ -233,6 +233,25 @@ export class Actor {
   }
 }
 
+/**
+ * Which generated backdrop a biome uses.
+ *
+ * The daemon assigns eleven biomes but there are five painted scenes, so the
+ * rest map onto their nearest neighbour. Adding a scene_<name>.png is enough to
+ * give a biome its own artwork — just point it at itself here.
+ */
+const BIOME_SCENES = {
+  meadow: 'meadow', orchard: 'meadow', workshop: 'meadow',
+  forest: 'forest', tundra: 'forest',
+  harbor: 'harbor', cliffs: 'harbor',
+  canyon: 'canyon', bazaar: 'canyon', foundry: 'canyon',
+  citadel: 'citadel',
+};
+
+export function backdropFor(biome) {
+  return `scene_${BIOME_SCENES[biome] || 'meadow'}`;
+}
+
 /** Draw one square cell out of a horizontal sprite strip, bottom-centred. */
 function drawSheetFrame(ctx, img, frame, size) {
   const cell = img.height;
@@ -363,8 +382,9 @@ export class Scene {
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
 
-    if (this.backdrop && this.backdrop.ready) {
-      ctx.drawImage(this.backdrop.img, 0, 0, LOGICAL_W, LOGICAL_H);
+    const backdrop = sprites.get(backdropFor(this.biome));
+    if (backdrop && backdrop.ready) {
+      ctx.drawImage(backdrop.img, 0, 0, LOGICAL_W, LOGICAL_H);
     } else {
       drawFallbackGround(ctx, this.biome, this.time);
     }

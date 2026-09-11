@@ -14,7 +14,7 @@
 
 import { avatarSvg, SPECIES, speciesFor, speciesLabel } from './characters.js';
 import {
-  LOGICAL_H, LOGICAL_W, Scene, loadSprite, registerScene, unregisterScene,
+  LOGICAL_H, LOGICAL_W, Scene, backdropFor, loadSprite, registerScene, unregisterScene,
 } from './scene.js';
 
 /* --------------------------------------------------------------- state */
@@ -37,6 +37,7 @@ const SPRITE_NAMES = [
   'generalist', 'guide', 'tinkerer', 'villager',
   'station_run', 'station_edit', 'station_read',
   'station_write', 'station_search', 'station_web',
+  'scene_meadow', 'scene_forest', 'scene_harbor', 'scene_canyon', 'scene_citadel',
 ];
 
 function preloadSprites() {

@@ -44,6 +44,16 @@ Chibi proportions: big head, small body, two stubby legs."
 PROP="Layout: a single object centred on a 64x64 canvas, drawn in three-quarter \
 view, resting on nothing."
 
+# Backdrops are the one asset that is NOT transparent — they are the ground the
+# villagers walk on, so they need a sky, a horizon and a flat strip at the bottom.
+SCENE="Layout: a single 320x120 side-on landscape, one frame, no character in it. \
+The bottom third is FLAT LEVEL GROUND for characters to walk along, unobstructed \
+across the full width. Buildings and scenery sit in the upper two thirds and along \
+the back edge only. Bright and inviting, gentle depth with two parallax layers. \
+16-bit SNES-style pixel art, crisp hard-edged pixels, limited palette, no \
+anti-aliasing, no blur, no text, no labels, no characters, no creatures, no people, \
+no UI, no frame border."
+
 # name|frames|prompt
 read -r -d '' ASSETS <<EOF || true
 mayor|4|a cute chibi robot king with a small golden crown, cream-white enamel body, one glowing cyan visor eye and one golden ring eye, short stubby arms
@@ -61,6 +71,11 @@ station_read|1|a short wooden bookshelf packed with colourful books, one book op
 station_write|1|a wooden writing desk with an open scroll, an inkpot and a quill
 station_search|1|a wooden lookout post with a large magnifying glass mounted on it
 station_web|1|a brass telescope on a wooden tripod, pointed up and to the right
+scene_meadow|0|a sunny rolling green meadow village with two small thatched cottages set back from a flat dirt path, wildflowers, a pale blue sky with soft clouds
+scene_forest|0|a peaceful pine forest clearing with tall conifers at the back, mossy stumps and ferns, warm shafts of light, a flat mossy path along the bottom
+scene_harbor|0|a calm seaside harbour with a wooden jetty and two small moored sailing boats at the back, gulls, a flat plank boardwalk along the bottom
+scene_canyon|0|a warm desert canyon with layered orange rock walls and tall mesas at the back, a few cacti, a flat sandy floor along the bottom
+scene_citadel|0|a tidy stone citadel courtyard with pale towers and banners at the back, a flat flagstone floor along the bottom, a violet dusk sky
 EOF
 
 want=("$@")
@@ -77,6 +92,7 @@ generate() {
 
   local layout="$WALK"
   [ "$frames" = "1" ] && layout="$PROP"
+  [ "$frames" = "0" ] && layout="$SCENE"
 
   local prompt="Use your built-in image_gen tool to generate: ${subject}. ${layout} ${STYLE} \
 Intended use: sprites for a desktop game UI. Save as ${raw}. Reply only with the final file path."
@@ -96,8 +112,19 @@ Intended use: sprites for a desktop game UI. Save as ${raw}. Reply only with the
   fi
   [ -f "$raw" ] || { echo "  ! $name produced no image"; return 1; }
 
-  python3 "$HERE/scripts/make_sprite.py" "$raw" "$final" --frames "$frames" --cell 64 \
-    || { echo "  ! $name could not be sliced"; return 1; }
+  if [ "$frames" = "0" ]; then
+    # A backdrop is one opaque image, not a strip — just fit it to the stage.
+    python3 - "$raw" "$final" <<'PYEOF' || { echo "  ! $name could not be resized"; return 1; }
+import sys
+from PIL import Image
+src, dst = sys.argv[1], sys.argv[2]
+im = Image.open(src).convert("RGB")
+im.resize((320, 120), Image.LANCZOS).quantize(colors=64).save(dst)
+PYEOF
+  else
+    python3 "$HERE/scripts/make_sprite.py" "$raw" "$final" --frames "$frames" --cell 64 \
+      || { echo "  ! $name could not be sliced"; return 1; }
+  fi
   echo "  + $name done"
 }
 
