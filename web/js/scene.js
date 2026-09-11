@@ -54,6 +54,9 @@ const ACTOR_SIZE = 34;
 /** Ideal gap between two villagers standing at the same place. */
 const SLOT_SPACING = 17;
 
+/** How far to the side of a workbench a villager stands, so both are visible. */
+const PROP_CLEARANCE = 19;
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const ARRIVE_EPSILON = 1.5;
 
@@ -131,11 +134,14 @@ export class Actor {
   }
 
   /** Where this actor should stand, given its slot among others like it. */
-  placeAt(baseX, slot, total) {
+  placeAt(baseX, slot, total, besideProp = false) {
     // Fan out around the anchor so a crowd at one station stays legible instead
     // of collapsing into a single sprite.
     const spread = Math.min(SLOT_SPACING, 70 / Math.max(1, total - 1));
-    this.targetX = clamp(baseX + (slot - (total - 1) / 2) * spread, 10, LOGICAL_W - 10);
+    // Stand beside the workbench rather than on top of it — an actor drawn at
+    // the prop's own x hides the prop completely.
+    const anchor = besideProp ? baseX + PROP_CLEARANCE : baseX;
+    this.targetX = clamp(anchor + (slot - (total - 1) / 2) * spread, 10, LOGICAL_W - 10);
   }
 
   finish(ok) {
@@ -158,6 +164,11 @@ export class Actor {
       this.state = 'walking';
     } else {
       this.x = this.targetX;
+      if (this.working && this.state !== 'working') {
+        // Turn to face the workbench on arrival.
+        const station = STATIONS[this.station];
+        if (station) this.facing = station.x < this.x ? -1 : 1;
+      }
       this.state = this.working ? 'working' : 'idle';
     }
     this.phase += dt * (this.state === 'working' ? 9 : this.state === 'walking' ? 8 : 2.2);
@@ -362,10 +373,12 @@ export class Scene {
     }
     for (const [key, members] of groups) {
       members.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable, not frame-dependent
-      const anchor = key.startsWith('idle:')
-        ? IDLE_SPOTS[Number(key.slice(5))] || IDLE_SPOTS[0]
-        : (STATIONS[key] || STATIONS.other);
-      members.forEach((actor, index) => actor.placeAt(anchor.x, index, members.length));
+      const atStation = !key.startsWith('idle:');
+      const anchor = atStation
+        ? (STATIONS[key] || STATIONS.other)
+        : (IDLE_SPOTS[Number(key.slice(5))] || IDLE_SPOTS[0]);
+      members.forEach((actor, index) =>
+        actor.placeAt(anchor.x, index, members.length, atStation));
     }
   }
 
