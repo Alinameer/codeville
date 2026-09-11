@@ -199,7 +199,7 @@ sprite sheet.
 ## Development
 
 ```bash
-python3 -m unittest discover -s daemon/tests -v   # 150 tests, no test deps either
+python3 -m unittest discover -s daemon/tests -v   # 186 tests, no test deps either
 cd daemon && python3 -m codeville --once          # one scan, print a summary
 cd daemon && python3 -m codeville --print-url     # run in the foreground
 ```

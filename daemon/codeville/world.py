@@ -40,6 +40,11 @@ from .records import (
 #: Seconds of silence after which a villager is shown dozing rather than working.
 IDLE_AFTER = 45.0
 
+#: The same, but for a villager with a tool still in flight. A single Bash call can
+#: run for minutes without writing anything to the transcript, and showing that
+#: agent as dozing is simply wrong — it is the one doing the most work.
+IDLE_AFTER_WITH_TOOL = 12 * 60.0
+
 #: Seconds of silence after which a villager leaves the village entirely.
 GONE_AFTER = 15 * 60.0
 
@@ -467,7 +472,8 @@ class World:
             for session in list(village.sessions.values()):
                 for villager in list(session.villagers.values()):
                     quiet = moment - villager.last_seen
-                    if not villager.is_finished and quiet > IDLE_AFTER:
+                    patience = IDLE_AFTER_WITH_TOOL if villager.tool else IDLE_AFTER
+                    if not villager.is_finished and quiet > patience:
                         if villager.state != IDLE:
                             villager.tool = None
                         events += self._set_state(villager, IDLE)
