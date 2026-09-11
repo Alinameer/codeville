@@ -293,6 +293,38 @@ class TestSweep(WorldTestCase):
         self.assertIn("session.end", kinds(events))
         self.assertEqual(self.world.villages[VILLAGE].sessions, {})
 
+    def test_agent_the_journal_says_is_alive_thinks_rather_than_dozes(self):
+        """A transcript is only appended when a turn finishes, so an agent
+        composing a long answer writes nothing for minutes. The journal knows it
+        started and never returned, so it must not be shown dozing."""
+        self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "started", "agent_id": "a1", "label": "design:characters",
+             "phase": "Design"}])
+        self.world.sweep(now() + IDLE_AFTER + 5)
+        villager = self.world.session(VILLAGE, SESSION).villagers["a1"]
+        self.assertEqual(villager.state, THINKING)
+
+    def test_agent_the_journal_says_is_alive_is_never_retired(self):
+        self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "started", "agent_id": "a1", "label": "x", "phase": "Design"}])
+        self.world.sweep(now() + GONE_AFTER + 5)
+        self.assertIn("a1", self.world.session(VILLAGE, SESSION).villagers)
+
+    def test_journal_result_releases_the_agent(self):
+        self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "started", "agent_id": "a1", "label": "x", "phase": "Design"}])
+        self.world.ingest_journal(VILLAGE, SESSION, [
+            {"kind": "result", "agent_id": "a1", "label": "", "phase": ""}])
+        villager = self.world.session(VILLAGE, SESSION).villagers["a1"]
+        self.assertFalse(villager.awaiting_result)
+        self.assertEqual(villager.state, DONE)
+
+    def test_agent_without_a_journal_still_dozes(self):
+        """Plain subagents have no journal, so silence still means idle there."""
+        self.world.ingest_agent_meta(VILLAGE, SESSION, "a2", {"agentType": "Explore"})
+        self.world.sweep(now() + IDLE_AFTER + 5)
+        self.assertEqual(self.world.session(VILLAGE, SESSION).villagers["a2"].state, IDLE)
+
     def test_finished_villagers_are_not_re_idled(self):
         self.world.ingest_agent_meta(VILLAGE, SESSION, "a1", {"agentType": "x"})
         self.world.finish_agent(VILLAGE, SESSION, "a1")

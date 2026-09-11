@@ -14,6 +14,12 @@ Two rules shape the design:
   when the user walked away, and nothing is written to say which. So a villager
   goes ``idle`` after :data:`IDLE_AFTER` seconds of silence and is only retired
   after :data:`GONE_AFTER`, rather than being deleted the moment writes stop.
+* **The journal is the liveness oracle.** A transcript is only appended to when a
+  turn *finishes*, so an agent spending three minutes composing a long answer
+  writes nothing at all in the meantime — by file activity alone it is
+  indistinguishable from one that died. A workflow journal records ``started``
+  and ``result`` per agent, so an agent with a start and no result is known to be
+  alive however quiet its file is, and is shown thinking rather than dozing.
 """
 
 from __future__ import annotations
@@ -84,6 +90,9 @@ class Villager:
     tool_count: int = 0
     error_count: int = 0
     tokens_out: int = 0
+    #: True between a journal "started" and its "result": the agent is known to be
+    #: alive, so silence means it is composing, not gone.
+    awaiting_result: bool = False
 
     @property
     def stage(self) -> str:
@@ -113,6 +122,7 @@ class Villager:
             "tool_count": self.tool_count,
             "error_count": self.error_count,
             "tokens_out": self.tokens_out,
+            "awaiting_result": self.awaiting_result,
         }
 
 
@@ -414,6 +424,7 @@ class World:
             return []
         villager.state = DONE if ok else FAILED
         villager.ok = ok
+        villager.awaiting_result = False
         villager.ended_at = now()
         villager.tool = None
         return [{"t": "agent.done", "agent": villager.id, "ok": ok}]
@@ -450,6 +461,7 @@ class World:
                 villager, created = self._villager(
                     session, agent_id, agent_type="workflow-subagent",
                     description=entry.get("label", ""), phase=entry.get("phase", ""))
+                villager.awaiting_result = True
                 if created:
                     events.append({"t": "agent.spawn", "agent": villager.to_dict()})
                 else:
@@ -474,10 +486,15 @@ class World:
                     quiet = moment - villager.last_seen
                     patience = IDLE_AFTER_WITH_TOOL if villager.tool else IDLE_AFTER
                     if not villager.is_finished and quiet > patience:
-                        if villager.state != IDLE:
-                            villager.tool = None
-                        events += self._set_state(villager, IDLE)
-                    if quiet > GONE_AFTER:
+                        if villager.awaiting_result:
+                            # The journal says this agent is still running, so the
+                            # silence is a long turn being composed, not absence.
+                            events += self._set_state(villager, THINKING)
+                        else:
+                            if villager.state != IDLE:
+                                villager.tool = None
+                            events += self._set_state(villager, IDLE)
+                    if quiet > GONE_AFTER and not villager.awaiting_result:
                         del session.villagers[villager.id]
                         events.append({"t": "agent.despawn", "agent": villager.id})
                 if moment - session.last_activity > SESSION_GONE_AFTER:

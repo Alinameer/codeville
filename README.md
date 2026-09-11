@@ -183,6 +183,14 @@ three no longer exist on disk.
 thinking" from "the user walked away". Villagers doze after 45 seconds of quiet and
 are only retired after 15 minutes, rather than vanishing the moment writes stop.
 
+**The journal is the liveness oracle.** A transcript is only appended to when a turn
+*finishes*. An agent spending three minutes composing a long answer writes nothing at
+all in the meantime — by file activity alone it is indistinguishable from one that
+died, and an early version of Codeville showed exactly that: agents dozing while they
+were the busiest things on the machine. A workflow journal records `started` and
+`result` per agent, so an agent with a start and no result is known to be alive
+however quiet its file is.
+
 ## Why there are no dependencies
 
 Codeville installs nothing. No pip, no npm, no build step, no virtualenv.
@@ -200,7 +208,7 @@ sprite sheet.
 ## Development
 
 ```bash
-python3 -m unittest discover -s daemon/tests -v   # 207 tests, no test deps either
+python3 -m unittest discover -s daemon/tests -v   # 211 tests, no test deps either
 cd daemon && python3 -m codeville --once          # one scan, print a summary
 cd daemon && python3 -m codeville --print-url     # run in the foreground
 ```
